@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A Technical Document Page</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="flex-container">
+        <nav id="navbar">
+            <header>Python Documentation</header>
+            <ul>
+                <a href="#Extending_Python_with_C_or_C++" class="nav-link"><li>Extending Python with C or C++</li></a>
+                <a href="#A_Simple_Example" class="nav-link"><li>A Simple Example</li></a>
+                <a href="#Intermezzo:_Errors_and_Exceptions" class="nav-link"><li>Intermezzo: Errors and Exceptions</li></a>
+                <a href="#Back_to_the_Example" class="nav-link"><li>Back to the Example</li></a>
+                <a href="#Compilation_and_Linkage" class="nav-link"><li>Compilation and Linkage</li></a>
+                <a href="#Calling_Python_Functions_from_C" class="nav-link"><li>Calling Python Functions from C</li></a>
+                <a href="#Extracting_Parameters_in_Extension_Functions" class="nav-link"><li>Extracting Parameters in Extension Functions</li></a>
+                <a href="#Keyword_Parameters_for_Extension_Functions" class="nav-link"><li>Keyword Parameters for Extension Functions</li></a>
+                <a href="#Building_Arbitrary_Values" class="nav-link"><li>Building Arbitrary Values</li></a>
+                <a href="#Reference_Counts" class="nav-link"><li>Reference Counts</li></a>
+                <a href="#Reference_Counting_in_Python" class="nav-link"><li>Reference Counting in Python</li></a>
+                <a href="#Ownership_Rules" class="nav-link"><li>Ownership Rules</li></a>
+                <a href="#Thin_Ice" class="nav-link"><li>Thin Ice</li></a>
+                <a href="#Reference" class="nav-link"><li>Reference</li></a>
+            </ul>
+        </nav>
+        <main id="main-doc">
+            <section class="main-section" id="Extending_Python_with_C_or_C++">
+                <header>Extending Python with C or C++</header>
+                <P>
+                    It is quite easy to add new built-in modules to Python, if you know how to program in C. Such extension modules can do two things that can’t be done directly in Python: they can implement new built-in object types, and they can call C library functions and system calls.
+                </P>
+                <P>
+                    To support extensions, the Python API (Application Programmers Interface) defines a set of functions, macros and variables that provide access to most aspects of the Python run-time system. The Python API is incorporated in a C source file by including the header <code>"Python.h"</code>.
+                </P>
+            </section>
+            <section class="main-section" id="A_Simple_Example">
+                <header>A Simple Example</header>
+                <p>
+                    Let’s create an extension module called <code>spam</code> (the favorite food of Monty Python fans…) and let’s say we want to create a Python interface to the C library function <code>system()</code> . This function takes a null-terminated character string as argument and returns an integer. We want this function to be callable from Python as follows:
+                </p>
+                <code>
+                    <pre>
+                        import spam
+                        status = spam.system("ls -l")
+                    </pre>
+                </code>
+                <p>
+                    Begin by creating a file <code>spammodule.c</code>. (Historically, if a module is called <code>spam</code>, the C file containing its implementation is called <code>spammodule.c</code>; if the module name is very long, like <code>spammify</code>, the module name can be just <code>spammify.c</code>.)
+                </p>
+                <ul>
+                    <li>
+                        The first two lines of our file can be:
+                    </li>
+                </ul>
+                <code>
+                    <pre>
+                        #define PY_SSIZE_T_CLEAN
+                        #include < Python.h >
+                    </pre>
+                </code>
+                <p>
+                    which pulls in the Python API (you can add a comment describing the purpose of the module and a copyright notice if you like).
+                </p>
+                <p>
+                    All user-visible symbols defined by Python.h have a prefix of Py or PY, except those defined in standard header files. For convenience, and since they are used extensively by the Python interpreter, "Python.h" includes a few standard header files: <stdio.h>, <string.h>, <errno.h>, and <stdlib.h>. If the latter header file does not exist on your system, it declares the functions malloc(), free() and realloc() directly.
+                </p>
+                <ul>
+                    <li>The next thing we add to our module file is the C function that will be called when the Python expression spam.system(string) is evaluated (we’ll see shortly how it ends up being called):</li>
+                </ul>
+                <code>
+                    <pre>
+                        static PyObject *
+                        spam_system(PyObject *self, PyObject *args)
+                        {
+                            const char *command;
+                            int sts;
+
+                            if (!PyArg_ParseTuple(args, "s", &command))
+                                return NULL;
+                            sts = system(command);
+                            return PyLong_FromLong(sts);
+                        }
+                    </pre>
+                </code>
+                <p>
+                    There is a straightforward translation from the argument list in Python (for example, the single expression "ls -l") to the arguments passed to the C function. The C function always has two arguments, conventionally named self and args.
+                </p>
+                <p>
+                    The self argument points to the module object for module-level functions; for a method it would point to the object instance.
+                </p>
+                <p>
+                    The args argument will be a pointer to a Python tuple object containing the arguments. Each item of the tuple corresponds to an argument in the call’s argument list. The arguments are Python objects — in order to do anything with them in our C function we have to convert them to C values. The function PyArg_ParseTuple() in the Python API checks the argument types and converts them to C values. It uses a template string to determine the required types of the arguments as well as the types of the C variables into which to store the converted values. More about this later.
+                </p>
+                <p>
+                    PyArg_ParseTuple() returns true (nonzero) if all arguments have the right type and its components have been stored in the variables whose addresses are passed. It returns false (zero) if an invalid argument list was passed. In the latter case it also raises an appropriate exception so the calling function can return NULL immediately (as we saw in the example).
+                </p>
+            </section>
+            <section class="main-section" id="Intermezzo:_Errors_and_Exceptions">
+                <header>Intermezzo: Errors and Exceptions</header>
+                <p>
+                    An important convention throughout the Python interpreter is the following: when a function fails, it should set an exception condition and return an error value (usually a <code>NULL</code> pointer). Exceptions are stored in a static global variable inside the interpreter; if this variable is <code>NULL</code> no exception has occurred. A second global variable stores the “associated value” of the exception (the second argument to <code>raise</code>). A third variable contains the stack traceback in case the error originated in Python code. These three variables are the C equivalents of the result in Python of <code>sys.exc_info()</code> (see the section on module <code>sys</code> in the Python Library Reference). It is important to know about them to understand how errors are passed around.
+                </p>
+                <p>
+                    The Python API defines a number of functions to set various types of exceptions.
+                </p>
+                <p>
+                    The most common one is <code>PyErr_SetString()</code>. Its arguments are an exception object and a C string. The exception object is usually a predefined object like <code>PyExc_ZeroDivisionError</code>. The C string indicates the cause of the error and is converted to a Python string object and stored as the “associated value” of the exception.
+                </p>
+                <p>
+                    Another useful function is <code>PyErr_SetFromErrno()</code>, which only takes an exception argument and constructs the associated value by inspection of the global variable <code>errno</code>. The most general function is <code>PyErr_SetObject()</code>, which takes two object arguments, the exception and its associated value. You don’t need to <code>Py_INCREF()</code> the objects passed to any of these functions.
+                </p>
+                <p>
+                    You can test non-destructively whether an exception has been set with <code>PyErr_Occurred()</code>. This returns the current exception object, or <code>NULL</code> if no exception has occurred. You normally don’t need to call <code>PyErr_Occurred()</code> to see whether an error occurred in a function call, since you should be able to tell from the return value.
+                </p>
+                <p>
+                    You can also define a new exception that is unique to your module. For this, you usually declare a static object variable at the beginning of your file:
+                </p>
+                <code>
+                    <pre>
+                        static PyObject *SpamError;
+                    </pre>
+                </code>
+                <p>
+                    and initialize it in your module’s initialization function (PyInit_spam()) with an exception object:
+                </p>
+                <code>
+                    <pre>
+                        PyMODINIT_FUNC
+                        PyInit_spam(void)
+                        {
+                            PyObject *m;
+
+                            m = PyModule_Create(&spammodule);
+                            if (m == NULL)
+                                return NULL;
+
+                            SpamError = PyErr_NewException("spam.error", NULL, NULL);
+                            Py_XINCREF(SpamError);
+                            if (PyModule_AddObject(m, "error", SpamError) < 0) {
+                                Py_XDECREF(SpamError);
+                                Py_CLEAR(SpamError);
+                                Py_DECREF(m);
+                                return NULL;
+                            }
+
+                            return m;
+                        }
+                    </pre>
+                </code>
+                <p>
+                    Note that the Python name for the exception object is <code>spam.error</code>. The <code>PyErr_NewException()</code> function may create a class with the base class being <code>Exception</code> (unless another class is passed in instead of <code>NULL</code>), described in Built-in Exceptions.
+                </p>
+                <p>
+                    Note also that the <code>SpamError</code> variable retains a reference to the newly created exception class; this is intentional! Since the exception could be removed from the module by external code, an owned reference to the class is needed to ensure that it will not be discarded, causing <code>SpamError</code> to become a dangling pointer. Should it become a dangling pointer, C code which raises the exception could cause a core dump or other unintended side effects. 
+                </p>
+                <p>
+                    We discuss the use of <code>PyMODINIT_FUNC</code> as a function return type later in this sample.
+                </p>
+                <ul>
+                    <li>The <code>spam.error</code> exception can be raised in your extension module using a call to <code>PyErr_SetString()</code> as shown below:</li>
+                </ul>
+                <code>
+                    <pre>
+                        static PyObject *
+                        spam_system(PyObject *self, PyObject *args)
+                        {
+                            const char *command;
+                            int sts;
+
+                            if (!PyArg_ParseTuple(args, "s", &command))
+                                return NULL;
+                            sts = system(command);
+                            if (sts < 0) {
+                                PyErr_SetString(SpamError, "System command failed");
+                                return NULL;
+                            }
+                            return PyLong_FromLong(sts);
+                        }
+                    </pre>
+                </code>
+            </section>
+            <section class="main-section" id="Back_to_the_Example">
+                <header>Back to the Example</header>
+                <p>
+                    Going back to our example function, you should now be able to understand this statement:
+                </p>
+                <code>
+                    <pre>
+                        if (!PyArg_ParseTuple(args, "s", &command))
+                            return NULL;
+                    </pre>
+                </code>
+                <p>
+                    It returns <code>NULL</code> (the error indicator for functions returning object pointers) if an error is detected in the argument list, relying on the exception set by <code>PyArg_ParseTuple()</code>. Otherwise the string value of the argument has been copied to the local variable <code>command</code>. This is a pointer assignment and you are not supposed to modify the string to which it points (so in Standard C, the variable <code>command</code> should properly be declared as <code>const char *command</code>).
+                </p>
+                <ul>
+                    <li>The next statement is a call to the Unix function <code>system()</code>, passing it the string we just got from <code>PyArg_ParseTuple()</code>:</li>
+                </ul>
+                <code>
+                    <pre>
+                    sts = system(command);
+                    </pre>
+                </code>
+                <p>
+                    Our <code>spam.system()</code> function must return the value of <code>sts</code> as a Python object. This is done using the function <code>PyLong_FromLong()</code>.
+                </p>
+                <code>return PyLong_FromLong(sts);</code>
+                <p>
+                    In this case, it will return an integer object. (Yes, even integers are objects on the heap in Python!)
+                </p>
+                <p>
+                    If you have a C function that returns no useful argument (a function returning <code>void</code>), the corresponding Python function must return <code>None</code>. You need this idiom to do so (which is implemented by the <code>Py_RETURN_NONE</code> macro):
+                </p>
+                <code>
+                    <pre>
+                        Py_INCREF(Py_None);
+                        return Py_None;
+                    </pre>
+                </code>
+                <p>
+                    <code>Py_None</code> is the C name for the special Python object <code>None</code>. It is a genuine Python object rather than a <code>NULL</code> pointer, which means “error” in most contexts, as we have seen.
+                </p>
+            </section>
+            <section class="main-section" id="Compilation_and_Linkage">
+                <header>Compilation and Linkage</header>
+                <p>
+                    There are two more things to do before you can use your new extension: compiling and linking it with the Python system. If you use dynamic loading, the details may depend on the style of dynamic loading your system uses; see the chapters about building extension modules (chapter Building C and C++ Extensions) and additional information that pertains only to building on Windows (chapter Building C and C++ Extensions on Windows) for more information about this.
+                </p>
+                <p>
+                    If you can’t use dynamic loading, or if you want to make your module a permanent part of the Python interpreter, you will have to change the configuration setup and rebuild the interpreter. Luckily, this is very simple on Unix: just place your file (<code>spammodule.c</code> for example) in the <code>Modules/</code> directory of an unpacked source distribution, add a line to the file <code>Modules/Setup.local</code> describing your file:
+                </p>
+                <code>
+                    <pre>
+                        spam spammodule.o
+                    </pre>
+                </code>
+                <p>
+                    and rebuild the interpreter by running make in the toplevel directory. You can also run make in the <code>Modules/</code> subdirectory, but then you must first rebuild <code>Makefile</code> there by running ‘make Makefile’. (This is necessary each time you change the <code>Setup</code> file.)
+                </p>
+                <p>
+                    If your module requires additional libraries to link with, these can be listed on the line in the configuration file as well, for instance:
+                </p>
+                <code>
+                    <pre>
+                        spam spammodule.o -lX11
+                    </pre>
+                </code>
+            </section>
+            <section class="main-section" id="Calling_Python_Functions_from_C">
+                <header>Calling Python Functions from C</header>
+                <p>
+                    So far we have concentrated on making C functions callable from Python. The reverse is also useful: calling Python functions from C. This is especially the case for libraries that support so-called “callback” functions. If a C interface makes use of callbacks, the equivalent Python often needs to provide a callback mechanism to the Python programmer; the implementation will require calling the Python callback functions from a C callback. Other uses are also imaginable.
+                </p>
+                <p>
+                    Fortunately, the Python interpreter is easily called recursively, and there is a standard interface to call a Python function. (I won’t dwell on how to call the Python parser with a particular string as input — if you’re interested, have a look at the implementation of the <code>-c</code> command line option in <code>Modules/main.c</code> from the Python source code.)
+                </p>
+                <p>
+                    Calling a Python function is easy. First, the Python program must somehow pass you the Python function object. You should provide a function (or some other interface) to do this. When this function is called, save a pointer to the Python function object (be careful to <code>Py_INCREF()</code> it!) in a global variable — or wherever you see fit. For example, the following function might be part of a module definition:
+                </p>
+                <code>
+                    <pre>
+                        static PyObject *my_callback = NULL;
+
+                        static PyObject *
+                        my_set_callback(PyObject *dummy, PyObject *args)
+                        {
+                            PyObject *result = NULL;
+                            PyObject *temp;
+
+                            if (PyArg_ParseTuple(args, "O:set_callback", &temp)) {
+                                if (!PyCallable_Check(temp)) {
+                                    PyErr_SetString(PyExc_TypeError, "parameter must be callable");
+                                    return NULL;
+                                }
+                                Py_XINCREF(temp);         /* Add a reference to new callback */
+                                Py_XDECREF(my_callback);  /* Dispose of previous callback */
+                                my_callback = temp;       /* Remember new callback */
+                                /* Boilerplate to return "None" */
+                                Py_INCREF(Py_None);
+                                result = Py_None;
+                            }
+                            return result;
+                        }
+                    </pre>
+                </code>
+            </section>
+            <section class="main-section" id="Extracting_Parameters_in_Extension_Functions">
+                <header>Extracting Parameters in Extension Functions</header>
+                <p>
+                    The <code>PyArg_ParseTuple()</code> function is declared as follows:
+                </p>
+                <code>
+                    <pre>
+                        int PyArg_ParseTuple(PyObject *arg, const char *format, ...);
+                    </pre>
+                </code>
+                <p>
+                    The arg argument must be a tuple object containing an argument list passed from Python to a C function. The format argument must be a format string, whose syntax is explained in Parsing arguments and building values in the Python/C API Reference Manual. The remaining arguments must be addresses of variables whose type is determined by the format string.
+                </p>
+                <p>
+                    Note that while <code>PyArg_ParseTuple()</code> checks that the Python arguments have the required types, it cannot check the validity of the addresses of C variables passed to the call: if you make mistakes there, your code will probably crash or at least overwrite random bits in memory. So be careful!
+                </p>
+                <p>
+                    Note that any Python object references which are provided to the caller are borrowed references; do not decrement their reference count!
+                </p>
+                <ul>
+                    <li>Some example calls:</li>
+                </ul>
+                <code>
+                    <pre>
+                        #define PY_SSIZE_T_CLEAN  /* Make "s#" use Py_ssize_t rather than int. */
+                        #include < Python.h>
+                    </pre>
+                </code>
+                <code>
+                    <pre>
+                        int ok;
+                        int i, j;
+                        long k, l;
+                        const char *s;
+                        Py_ssize_t size;
+
+                        ok = PyArg_ParseTuple(args, ""); /* No arguments */
+                            /* Python call: f() */
+                    </pre>
+                </code>
+                <code>
+                    <pre>
+                        ok = PyArg_ParseTuple(args, "s", &s); /* A string */
+                            /* Possible Python call: f('whoops!') */
+                    </pre>
+                </code>
+                <code>
+                    <pre>
+                        ok = PyArg_ParseTuple(args, "lls", &k, &l, &s); /* Two longs and a string */
+                            /* Possible Python call: f(1, 2, 'three') */
+                    </pre>
+                </code>
+                <code>
+                    <pre>
+                        ok = PyArg_ParseTuple(args, "(ii)s#", &i, &j, &s, &size);
+                            /* A pair of ints and a string, whose size is also returned */
+                            /* Possible Python call: f((1, 2), 'three') */
+                    </pre>
+                </code>
+                <code>
+                    <pre>
+                        {
+                            const char *file;
+                            const char *mode = "r";
+                            int bufsize = 0;
+                            ok = PyArg_ParseTuple(args, "s|si", &file, &mode, &bufsize);
+                            /* A string, and optionally another string and an integer */
+                            /* Possible Python calls:
+                               f('spam')
+                               f('spam', 'w')
+                               f('spam', 'wb', 100000) */
+                        }
+                    </pre>
+                </code>
+                <code>
+                    <pre>
+                        {
+                            int left, top, right, bottom, h, v;
+                            ok = PyArg_ParseTuple(args, "((ii)(ii))(ii)",
+                                     &left, &top, &right, &bottom, &h, &v);
+                            /* A rectangle and a point */
+                            /* Possible Python call:
+                               f(((0, 0), (400, 300)), (10, 10)) */
+                        }
+                    </pre>
+                </code>
+                <code>
+                    <pre>
+                        {
+                            Py_complex c;
+                            ok = PyArg_ParseTuple(args, "D:myfunction", &c);
+                            /* a complex, also providing a function name for errors */
+                            /* Possible Python call: myfunction(1+2j) */
+                        }
+                    </pre>
+                </code>
+            </section>
+            <section class="main-section" id="Keyword_Parameters_for_Extension_Functions">
+                <header>Keyword Parameters for Extension Functions</header>
+                <p>
+                    The <code>PyArg_ParseTupleAndKeywords()</code> function is declared as follows:
+                </p>
+                <code>
+                    <pre>
+                        int PyArg_ParseTupleAndKeywords(PyObject *arg, PyObject *kwdict,
+                                                        const char *format, char *kwlist[], ...);
+                    </pre>
+                </code>
+                <p>
+                    The arg and format parameters are identical to those of the <code>PyArg_ParseTuple()</code> function. The kwdict parameter is the dictionary of keywords received as the third parameter from the Python runtime. The kwlist parameter is a <code>NULL</code>-terminated list of strings which identify the parameters; the names are matched with the type information from format from left to right. On success, <code>PyArg_ParseTupleAndKeywords()</code> returns true, otherwise it returns false and raises an appropriate exception.
+                </p>
+                <ul>
+                    <li>
+                        <strong>Note:</strong> Nested tuples cannot be parsed when using keyword arguments! Keyword parameters passed in which are not present in the kwlist will cause <code>TypeError</code> to be raised.
+                    </li>
+                </ul>
+                <p>
+                    Here is an example module which uses keywords, based on an example by Geoff Philbrick (philbrick@hks.com):
+                </p>
+                <code>
+                    <pre>
+                        #define PY_SSIZE_T_CLEAN  /* Make "s#" use Py_ssize_t rather than int. */
+                        #include < Python.h>
+
+                        static PyObject *
+                        keywdarg_parrot(PyObject *self, PyObject *args, PyObject *keywds)
+                        {
+                            int voltage;
+                            const char *state = "a stiff";
+                            const char *action = "voom";
+                            const char *type = "Norwegian Blue";
+
+                            static char *kwlist[] = {"voltage", "state", "action", "type", NULL};
+
+                            if (!PyArg_ParseTupleAndKeywords(args, keywds, "i|sss", kwlist,
+                                                            &voltage, &state, &action, &type))
+                                return NULL;
+
+                            printf("-- This parrot wouldn't %s if you put %i Volts through it.\n",
+                                action, voltage);
+                            printf("-- Lovely plumage, the %s -- It's %s!\n", type, state);
+
+                            Py_RETURN_NONE;
+                        }
+
+                        static PyMethodDef keywdarg_methods[] = {
+                            /* The cast of the function is necessary since PyCFunction values
+                            * only take two PyObject* parameters, and keywdarg_parrot() takes
+                            * three.
+                            */
+                            {"parrot", (PyCFunction)(void(*)(void))keywdarg_parrot, METH_VARARGS | METH_KEYWORDS,
+                            "Print a lovely skit to standard output."},
+                            {NULL, NULL, 0, NULL}   /* sentinel */
+                        };
+
+                        static struct PyModuleDef keywdargmodule = {
+                            PyModuleDef_HEAD_INIT,
+                            "keywdarg",
+                            NULL,
+                            -1,
+                            keywdarg_methods
+                        };
+
+                        PyMODINIT_FUNC
+                        PyInit_keywdarg(void)
+                    </pre>
+                </code>
+            </section>
+            <section class="main-section" id="Building_Arbitrary_Values">
+                <header>Building Arbitrary Values</header>
+                <p>
+                    This function is the counterpart to <code>PyArg_ParseTuple()</code>. It is declared as follows:
+                </p>
+                <code>
+                    <pre>
+                        PyObject *Py_BuildValue(const char *format, ...);
+                    </pre>
+                </code>
+                <p>
+                    It recognizes a set of format units similar to the ones recognized by <code>PyArg_ParseTuple()</code>, but the arguments (which are input to the function, not output) must not be pointers, just values. It returns a new Python object, suitable for returning from a C function called from Python.
+                </p>
+                <p>
+                    One difference with <code>PyArg_ParseTuple()</code>: while the latter requires its first argument to be a tuple (since Python argument lists are always represented as tuples internally), <code>Py_BuildValue()</code> does not always build a tuple. It builds a tuple only if its format string contains two or more format units. If the format string is empty, it returns <code>None</code>; if it contains exactly one format unit, it returns whatever object is described by that format unit. To force it to return a tuple of size 0 or one, parenthesize the format string.
+                </p>
+                <ul>
+                    <li>Examples (to the left the call, to the right the resulting Python value):</li>
+                </ul>
+                <code>
+                    <pre>
+                        Py_BuildValue("")                        None
+                        Py_BuildValue("i", 123)                  123
+                        Py_BuildValue("iii", 123, 456, 789)      (123, 456, 789)
+                        Py_BuildValue("s", "hello")              'hello'
+                        Py_BuildValue("y", "hello")              b'hello'
+                        Py_BuildValue("ss", "hello", "world")    ('hello', 'world')
+                        Py_BuildValue("s#", "hello", 4)          'hell'
+                        Py_BuildValue("y#", "hello", 4)          b'hell'
+                        Py_BuildValue("()")                      ()
+                        Py_BuildValue("(i)", 123)                (123,)
+                        Py_BuildValue("(ii)", 123, 456)          (123, 456)
+                        Py_BuildValue("(i,i)", 123, 456)         (123, 456)
+                        Py_BuildValue("[i,i]", 123, 456)         [123, 456]
+                        Py_BuildValue("{s:i,s:i}",
+                                    "abc", 123, "def", 456)    {'abc': 123, 'def': 456}
+                        Py_BuildValue("((ii)(ii)) (ii)",
+                                    1, 2, 3, 4, 5, 6)          (((1, 2), (3, 4)), (5, 6))
+                    </pre>
+                </code>
+            </section>
+            <section class="main-section" id="Reference_Counts">
+                <header>Reference Counts</header>
+                <p>
+                    In languages like C or C++, the programmer is responsible for dynamic allocation and deallocation of memory on the heap. In C, this is done using the functions <code>malloc()</code> and <code>free()</code>. In C++, the operators <code>new</code> and <code>delete</code> are used with essentially the same meaning and we’ll restrict the following discussion to the C case.
+                </p>
+                <p>
+                    Every block of memory allocated with <code>malloc()</code> should eventually be returned to the pool of available memory by exactly one call to <code>free()</code>. It is important to call <code>free()</code> at the right time. If a block’s address is forgotten but <code>free()</code> is not called for it, the memory it occupies cannot be reused until the program terminates. This is called a memory leak. On the other hand, if a program calls <code>free()</code> for a block and then continues to use the block, it creates a conflict with re-use of the block through another <code>malloc()</code> call. This is called using freed memory. It has the same bad consequences as referencing uninitialized data — core dumps, wrong results, mysterious crashes.
+                </p>
+                <p>
+                    Common causes of memory leaks are unusual paths through the code. For instance, a function may allocate a block of memory, do some calculation, and then free the block again. Now a change in the requirements for the function may add a test to the calculation that detects an error condition and can return prematurely from the function. It’s easy to forget to free the allocated memory block when taking this premature exit, especially when it is added later to the code. Such leaks, once introduced, often go undetected for a long time: the error exit is taken only in a small fraction of all calls, and most modern machines have plenty of virtual memory, so the leak only becomes apparent in a long-running process that uses the leaking function frequently. Therefore, it’s important to prevent leaks from happening by having a coding convention or strategy that minimizes this kind of errors.
+                </p>
+                <p>
+                    Since Python makes heavy use of <code>malloc()</code> and <code>free()</code>, it needs a strategy to avoid memory leaks as well as the use of freed memory. The chosen method is called reference counting. The principle is simple: every object contains a counter, which is incremented when a reference to the object is stored somewhere, and which is decremented when a reference to it is deleted. When the counter reaches zero, the last reference to the object has been deleted and the object is freed.
+                </p>
+                <p>
+                    An alternative strategy is called automatic garbage collection. (Sometimes, reference counting is also referred to as a garbage collection strategy, hence my use of “automatic” to distinguish the two.) The big advantage of automatic garbage collection is that the user doesn’t need to call <code>free()</code> explicitly. (Another claimed advantage is an improvement in speed or memory usage — this is no hard fact however.) The disadvantage is that for C, there is no truly portable automatic garbage collector, while reference counting can be implemented portably (as long as the functions <code>malloc()</code> and <code>free()</code> are available — which the C Standard guarantees). Maybe some day a sufficiently portable automatic garbage collector will be available for C. Until then, we’ll have to live with reference counts.
+                </p>
+                <p>
+                    While Python uses the traditional reference counting implementation, it also offers a cycle detector that works to detect reference cycles. This allows applications to not worry about creating direct or indirect circular references; these are the weakness of garbage collection implemented using only reference counting. Reference cycles consist of objects which contain (possibly indirect) references to themselves, so that each object in the cycle has a reference count which is non-zero. Typical reference counting implementations are not able to reclaim the memory belonging to any objects in a reference cycle, or referenced from the objects in the cycle, even though there are no further references to the cycle itself.
+                </p>
+                <p>
+                    The cycle detector is able to detect garbage cycles and can reclaim them. The <code>gc</code> module exposes a way to run the detector (the <code>collect()</code> function), as well as configuration interfaces and the ability to disable the detector at runtime. The cycle detector is considered an optional component; though it is included by default, it can be disabled at build time using the <code>--without-cycle-gc</code> option to the configure script on Unix platforms (including Mac OS X). If the cycle detector is disabled in this way, the <code>gc</code> module will not be available.
+                </p>
+            </section>
+            <section class="main-section" id="Reference_Counting_in_Python">
+                <header>Reference Counting in Python</header>
+                <p>
+                    There are two macros, <code>Py_INCREF(x)</code> and <code>Py_DECREF(x)</code>, which handle the incrementing and decrementing of the reference count. <code>Py_DECREF()</code> also frees the object when the count reaches zero. For flexibility, it doesn’t call <code>free()</code> directly — rather, it makes a call through a function pointer in the object’s type object. For this purpose (and others), every object also contains a pointer to its type object.
+                </p>
+                <p>
+                    The big question now remains: when to use <code>Py_INCREF(x)</code> and <code>Py_DECREF(x)</code>? Let’s first introduce some terms. Nobody “owns” an object; however, you can own a reference to an object. An object’s reference count is now defined as the number of owned references to it. The owner of a reference is responsible for calling <code>Py_DECREF()</code> when the reference is no longer needed. Ownership of a reference can be transferred. There are three ways to dispose of an owned reference: pass it on, store it, or call <code>Py_DECREF()</code>. Forgetting to dispose of an owned reference creates a memory leak.
+                </p>
+                <p>
+                    It is also possible to borrow a reference to an object. The borrower of a reference should not call <code>Py_DECREF()</code>. The borrower must not hold on to the object longer than the owner from which it was borrowed. Using a borrowed reference after the owner has disposed of it risks using freed memory and should be avoided completely .
+                </p>
+                <p>
+                    The advantage of borrowing over owning a reference is that you don’t need to take care of disposing of the reference on all possible paths through the code — in other words, with a borrowed reference you don’t run the risk of leaking when a premature exit is taken. The disadvantage of borrowing over owning is that there are some subtle situations where in seemingly correct code a borrowed reference can be used after the owner from which it was borrowed has in fact disposed of it.
+                </p>
+                <p>
+                    A borrowed reference can be changed into an owned reference by calling <code>Py_INCREF()</code>. This does not affect the status of the owner from which the reference was borrowed — it creates a new owned reference, and gives full owner responsibilities (the new owner must dispose of the reference properly, as well as the previous owner).
+                </p>
+            </section>
+            <section class="main-section" id="Ownership_Rules">
+                <header>Ownership Rules</header>
+                <p>
+                    Whenever an object reference is passed into or out of a function, it is part of the function’s interface specification whether ownership is transferred with the reference or not.
+                </p>
+                <p>
+                    Most functions that return a reference to an object pass on ownership with the reference. In particular, all functions whose function it is to create a new object, such as <code>PyLong_FromLong()</code> and <code>Py_BuildValue()</code>, pass ownership to the receiver. Even if the object is not actually new, you still receive ownership of a new reference to that object. For instance, <code>PyLong_FromLong()</code> maintains a cache of popular values and can return a reference to a cached item.
+                </p>
+                <p>
+                    Many functions that extract objects from other objects also transfer ownership with the reference, for instance <code>PyObject_GetAttrString()</code>. The picture is less clear, here, however, since a few common routines are exceptions: <code>PyTuple_GetItem()</code>, <ode>PyList_GetItem()</ode>, <code>PyDict_GetItem()</code>, and <code>PyDict_GetItemString()</code> all return references that you borrow from the tuple, list or dictionary.
+                </p>
+                <p>
+                    The function <code>PyImport_AddModule()</code> also returns a borrowed reference, even though it may actually create the object it returns: this is possible because an owned reference to the object is stored in <code>sys.modules</code>.
+                </p>
+                <p>
+                    When you pass an object reference into another function, in general, the function borrows the reference from you — if it needs to store it, it will use <code>Py_INCREF()</code> to become an independent owner. There are exactly two important exceptions to this rule: <code>PyTuple_SetItem()</code> and <code>PyList_SetItem()</code>. These functions take over ownership of the item passed to them — even if they fail! (Note that <code>PyDict_SetItem()</code> and friends don’t take over ownership — they are “normal.”)
+                </p>
+                <p>
+                    When a C function is called from Python, it borrows references to its arguments from the caller. The caller owns a reference to the object, so the borrowed reference’s lifetime is guaranteed until the function returns. Only when such a borrowed reference must be stored or passed on, it must be turned into an owned reference by calling <code>Py_INCREF()</code>.
+                </p>
+                <p>
+                    The object reference returned from a C function that is called from Python must be an owned reference — ownership is transferred from the function to its caller.
+                </p>
+            </section>
+            <section class="main-section" id="Thin_Ice">
+                <header>Thin Ice</header>
+                <p>
+                    There are a few situations where seemingly harmless use of a borrowed reference can lead to problems. These all have to do with implicit invocations of the interpreter, which can cause the owner of a reference to dispose of it.
+                </p>
+                <p>
+                    The first and most important case to know about is using <code>Py_DECREF()</code> on an unrelated object while borrowing a reference to a list item. For instance:
+                </p>
+                <code>
+                    <pre>
+                        void
+                        bug(PyObject *list)
+                        {
+                            PyObject *item = PyList_GetItem(list, 0);
+
+                            PyList_SetItem(list, 1, PyLong_FromLong(0L));
+                            PyObject_Print(item, stdout, 0); /* BUG! */
+                        }
+                    </pre>
+                </code>
+                <p>
+                    This function first borrows a reference to <code>list[0]</code>, then replaces <code>list[1]</code> with the value <code>0</code>, and finally prints the borrowed reference. Looks harmless, right? But it’s not!
+                </p>
+                <p>
+                    Let’s follow the control flow into <code>PyList_SetItem()</code>. The list owns references to all its items, so when item 1 is replaced, it has to dispose of the original item 1. Now let’s suppose the original item 1 was an instance of a user-defined class, and let’s further suppose that the class defined a <code>__del__()</code> method. If this class instance has a reference count of 1, disposing of it will call its <code>__del__()</code> method.
+                </p>
+                <p>
+                    Since it is written in Python, the <code>__del__()</code> method can execute arbitrary Python code. Could it perhaps do something to invalidate the reference to <code>item</code> in <code>>bug()</code? You bet! Assuming that the list passed into <code>bug()</code> is accessible to the <code>__del__()</code> method, it could execute a statement to the effect of <code>del list[0]</code>, and assuming this was the last reference to that object, it would free the memory associated with it, thereby invalidating <code>item</code>.
+                </p>
+                <p>
+                    The solution, once you know the source of the problem, is easy: temporarily increment the reference count. The correct version of the function reads:
+                </p>
+                <code>
+                    <pre>
+                        void
+                        no_bug(PyObject *list)
+                        {
+                            PyObject *item = PyList_GetItem(list, 0);
+
+                            Py_INCREF(item);
+                            PyList_SetItem(list, 1, PyLong_FromLong(0L));
+                            PyObject_Print(item, stdout, 0);
+                            Py_DECREF(item);
+                        }
+                    </pre>
+                </code>
+                <p>
+                    This is a true story. An older version of Python contained variants of this bug and someone spent a considerable amount of time in a C debugger to figure out why his <code>__del__()</code> methods would fail…
+                </p>
+                <p>
+                    The second case of problems with a borrowed reference is a variant involving threads. Normally, multiple threads in the Python interpreter can’t get in each other’s way, because there is a global lock protecting Python’s entire object space. However, it is possible to temporarily release this lock using the macro <code>Py_BEGIN_ALLOW_THREADS</code>, and to re-acquire it using <code>Py_END_ALLOW_THREADS</code>. This is common around blocking I/O calls, to let other threads use the processor while waiting for the I/O to complete. Obviously, the following function has the same problem as the previous one:
+                </p>
+                <code>
+                    <pre>
+                        void
+                        bug(PyObject *list)
+                        {
+                            PyObject *item = PyList_GetItem(list, 0);
+                            Py_BEGIN_ALLOW_THREADS
+                            ...some blocking I/O call...
+                            Py_END_ALLOW_THREADS
+                            PyObject_Print(item, stdout, 0); /* BUG! */
+                        }
+                    </pre>
+                </code>
+            </section>
+            <section class="main-section" id="Reference">
+                <header>Reference</header>
+                <ul>
+                    <li>All the documentation in this page is taken from <a href="https://docs.python.org/3/extending/extending.html">python.org</a></li>
+                </ul>
+            </section>
+        </main>
+    </div>
+</body>
+</html>
